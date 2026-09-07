@@ -49,3 +49,26 @@ def test_normalize_rejects_unknown_status():
     }
     with pytest.raises(NormalizationError):
         normalize_ledger_row(row)
+
+
+def test_normalize_rejects_wrong_file_format_instead_of_crashing():
+    # e.g. a statement CSV uploaded with source_system=LEDGER selected --
+    # the columns just don't exist under the ledger's names. This must
+    # raise NormalizationError (caught upstream, reported as a rejected
+    # row), never an unhandled KeyError that would 500 the whole upload.
+    statement_shaped_row = {
+        "reference": "T-1001", "executed_at": "2025-07-01 09:15:00", "symbol": "BTC-USD",
+        "direction": "B", "qty": "0.5", "unit_price": "62000", "total": "31000.00",
+        "status": "SETTLED",
+    }
+    with pytest.raises(NormalizationError):
+        normalize_ledger_row(statement_shaped_row)
+
+
+def test_normalize_rejects_bad_date_format_instead_of_crashing():
+    row = {
+        "trade_id": "T-2", "traded_at": "not-a-date", "instrument": "BTC-USD",
+        "side": "BUY", "quantity": "1", "price": "1", "gross_amount": "1", "state": "SETTLED",
+    }
+    with pytest.raises(NormalizationError):
+        normalize_ledger_row(row)

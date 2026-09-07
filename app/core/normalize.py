@@ -51,42 +51,58 @@ def _normalize_ref(value):
     return str(value).strip().upper()
 
 
+def _column(row, name):
+    """Fetch a required column, turning a missing/blank header into a
+    NormalizationError instead of an unhandled KeyError -- this is what a
+    wrong source-system selection (or a file in the wrong format) hits."""
+    value = row.get(name)
+    if value is None:
+        raise NormalizationError(f"missing column {name!r} -- is this the right file/source?")
+    return value
+
+
 def normalize_ledger_row(row: dict) -> CanonicalRecord:
     """Our own ledger: trade_id,traded_at,instrument,side,quantity,price,gross_amount,state"""
-    traded_at = row["traded_at"].strip()
-    # ISO 8601 with trailing Z, e.g. 2025-07-01T09:15:00Z
-    dt = datetime.fromisoformat(traded_at.replace("Z", "+00:00")).astimezone(timezone.utc)
+    traded_at = _column(row, "traded_at").strip()
+    try:
+        # ISO 8601 with trailing Z, e.g. 2025-07-01T09:15:00Z
+        dt = datetime.fromisoformat(traded_at.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        raise NormalizationError(f"bad traded_at: {traded_at!r}")
 
     return CanonicalRecord(
         source_system="LEDGER",
-        external_ref=_normalize_ref(row["trade_id"]),
+        external_ref=_normalize_ref(_column(row, "trade_id")),
         executed_at=dt,
-        instrument=row["instrument"].strip().upper(),
-        side=_normalize_side(row["side"]),
-        quantity=_to_decimal(row["quantity"], "quantity"),
-        price=_to_decimal(row["price"], "price"),
-        amount=_to_decimal(row["gross_amount"], "gross_amount"),
-        status=_normalize_status(row["state"]),
+        instrument=_column(row, "instrument").strip().upper(),
+        side=_normalize_side(_column(row, "side")),
+        quantity=_to_decimal(_column(row, "quantity"), "quantity"),
+        price=_to_decimal(_column(row, "price"), "price"),
+        amount=_to_decimal(_column(row, "gross_amount"), "gross_amount"),
+        status=_normalize_status(_column(row, "state")),
         raw=dict(row),
     )
 
 
 def normalize_statement_row(row: dict) -> CanonicalRecord:
     """The other company's statement: reference,executed_at,symbol,direction,qty,unit_price,total,status"""
-    executed_at = row["executed_at"].strip()
-    # space-separated, no timezone marker -- assume UTC (documented in README)
-    dt = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    executed_at = _column(row, "executed_at").strip()
+    try:
+        # space-separated, no timezone marker -- assume UTC (documented in README)
+        dt = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise NormalizationError(f"bad executed_at: {executed_at!r}")
 
     return CanonicalRecord(
         source_system="STATEMENT",
-        external_ref=_normalize_ref(row["reference"]),
+        external_ref=_normalize_ref(_column(row, "reference")),
         executed_at=dt,
-        instrument=row["symbol"].strip().upper(),
-        side=_normalize_side(row["direction"], "direction"),
-        quantity=_to_decimal(row["qty"], "qty"),
-        price=_to_decimal(row["unit_price"], "unit_price"),
-        amount=_to_decimal(row["total"], "total"),
-        status=_normalize_status(row["status"]),
+        instrument=_column(row, "symbol").strip().upper(),
+        side=_normalize_side(_column(row, "direction"), "direction"),
+        quantity=_to_decimal(_column(row, "qty"), "qty"),
+        price=_to_decimal(_column(row, "unit_price"), "unit_price"),
+        amount=_to_decimal(_column(row, "total"), "total"),
+        status=_normalize_status(_column(row, "status")),
         raw=dict(row),
     )
 
