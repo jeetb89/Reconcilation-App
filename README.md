@@ -140,6 +140,33 @@ rejected before any row parsing happens at all.
 `run_reconciliation()` call and applied before the auto-matcher decides
 what's unmatched. A human's decision from yesterday is never re-asked.
 
+### Runs are incremental, not a full rescan every time
+
+The first run reconciles everything. Every run after that only re-examines:
+- records inserted or corrected since the last run (`source_record.updated_at
+  > last_run.run_at`),
+- the entire unmatched pool from the last run (a new counterpart might exist
+  now for any of them),
+- anything currently referenced by a `manual_match` or `unmatched_ack`
+  (so those decisions get re-verified, not just trusted forever), and
+- the existing counterpart of anything in the above, since `reconcile()`
+  needs both sides of a pair together to compare them.
+
+Everything else — a matched pair from last run where neither side changed —
+is copied forward into the new run's `run_result_item` rows as-is, never
+re-fed through the matcher. On a sample run with 45 loaded records and 17
+already-matched pairs, a no-op second run touches only the 9-record
+unmatched pool instead of all 45, and produces a byte-for-byte identical
+result.
+
+This lives entirely in `app/services/run_service.py` — `app/core/reconcile.py`
+stays a pure function over whatever list it's handed, unaware that its
+input might be a subset. Correctness for this is tested with a *differential*
+test (`tests/test_incremental_matches_full_rescan.py`) that, at every step
+of a multi-day scenario, independently runs a from-scratch full rescan and
+asserts the incremental result matches it exactly — "faster" is worthless
+if it's not identical, so that's the property actually under test.
+
 ## What I left out
 
 - **Auth / multi-user attribution.** `matched_by` / `acknowledged_by` fields
