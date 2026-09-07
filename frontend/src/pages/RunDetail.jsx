@@ -3,8 +3,8 @@ import {
   Button, Card, Col, Popconfirm, Row, Select, Space, Statistic, Table, Tabs, Tag, Typography, message,
 } from 'antd'
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { getRunDetail, manualMatch, unmatchedAck } from '../api.js'
+import { useNavigate, useParams } from 'react-router-dom'
+import { getRunDetail, manualMatch, startRun, unmatchedAck } from '../api.js'
 
 const { Title } = Typography
 
@@ -25,10 +25,11 @@ const diffColumns = [
 
 export default function RunDetail() {
   const { runId } = useParams()
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [matchChoice, setMatchChoice] = useState({})
   // Tracks rows with a resolve action in flight, so a rapid double-click on
-  // the same row can't fire the request twice before refresh() removes it.
+  // the same row can't fire the request twice before it's resolved.
   const [busyIds, setBusyIds] = useState(() => new Set())
 
   function refresh() {
@@ -45,6 +46,18 @@ export default function RunDetail() {
     })
   }
 
+  // A manual-match/ack decision is saved immediately, but it only changes
+  // what a run *concludes* the next time reconciliation actually runs --
+  // this run's own result rows are a fixed snapshot from when it executed
+  // and never change. So after saving the decision, trigger a fresh run and
+  // jump to it; re-fetching this same run would just show the identical,
+  // now-stale snapshot and look like the click did nothing.
+  async function runAgainAndShowIt() {
+    const newRun = await startRun()
+    navigate(`/runs/${newRun.id}`)
+    if (String(newRun.id) === String(runId)) refresh() // already there -- refetch instead of no-op navigate
+  }
+
   async function handleMatch(ledgerRecordId) {
     if (busyIds.has(ledgerRecordId)) return
     const statementRecordId = matchChoice[ledgerRecordId]
@@ -53,13 +66,11 @@ export default function RunDetail() {
     setBusyIds((prev) => new Set(prev).add(ledgerRecordId))
     try {
       await manualMatch(ledgerRecordId, statementRecordId)
-      message.success('Matched. This pairing will hold on future runs.')
-      refresh()
+      message.success('Matched -- running reconciliation again to show it.')
+      await runAgainAndShowIt()
     } catch (err) {
       message.error(err.message)
     } finally {
-      // Always clear, success or failure -- otherwise the button spins
-      // forever unless refresh() happens to remove this exact row.
       clearBusy(ledgerRecordId)
     }
   }
@@ -70,8 +81,8 @@ export default function RunDetail() {
     setBusyIds((prev) => new Set(prev).add(sourceRecordId))
     try {
       await unmatchedAck(sourceRecordId)
-      message.success('Acknowledged as having no pair. Will not resurface on future runs.')
-      refresh()
+      message.success('Acknowledged -- running reconciliation again to show it.')
+      await runAgainAndShowIt()
     } catch (err) {
       message.error(err.message)
     } finally {
