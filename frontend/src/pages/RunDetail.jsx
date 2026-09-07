@@ -37,6 +37,14 @@ export default function RunDetail() {
 
   useEffect(refresh, [runId])
 
+  function clearBusy(id) {
+    setBusyIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   async function handleMatch(ledgerRecordId) {
     if (busyIds.has(ledgerRecordId)) return
     const statementRecordId = matchChoice[ledgerRecordId]
@@ -49,11 +57,10 @@ export default function RunDetail() {
       refresh()
     } catch (err) {
       message.error(err.message)
-      setBusyIds((prev) => {
-        const next = new Set(prev)
-        next.delete(ledgerRecordId)
-        return next
-      })
+    } finally {
+      // Always clear, success or failure -- otherwise the button spins
+      // forever unless refresh() happens to remove this exact row.
+      clearBusy(ledgerRecordId)
     }
   }
 
@@ -67,11 +74,8 @@ export default function RunDetail() {
       refresh()
     } catch (err) {
       message.error(err.message)
-      setBusyIds((prev) => {
-        const next = new Set(prev)
-        next.delete(sourceRecordId)
-        return next
-      })
+    } finally {
+      clearBusy(sourceRecordId)
     }
   }
 
