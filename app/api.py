@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models import ManualMatch, ReconciliationRun, RunResultItem, SourceRecord, UnmatchedAck, db
 from app.serializers import serialize_record, serialize_result_item, serialize_run
@@ -69,9 +70,14 @@ def run_detail(run_id):
 
 @bp.route("/manual-match", methods=["POST"])
 def manual_match():
-    data = request.get_json(force=True)
-    ledger_record_id = data["ledger_record_id"]
-    statement_record_id = data["statement_record_id"]
+    data = request.get_json(force=True, silent=True) or {}
+    ledger_record_id = data.get("ledger_record_id")
+    statement_record_id = data.get("statement_record_id")
+
+    if not ledger_record_id or not statement_record_id:
+        return jsonify({"error": "ledger_record_id and statement_record_id are required"}), 400
+    if not db.session.get(SourceRecord, ledger_record_id) or not db.session.get(SourceRecord, statement_record_id):
+        return jsonify({"error": "one of those records no longer exists -- try refreshing"}), 404
 
     exists = ManualMatch.query.filter_by(
         ledger_record_id=ledger_record_id, statement_record_id=statement_record_id
@@ -82,20 +88,42 @@ def manual_match():
             statement_record_id=statement_record_id,
             note=data.get("note"),
         ))
-        db.session.commit()
+        try:
+            db.session.commit()
+        except SQLAlchemyError:
+            # Two requests raced past the exists-check above (double click,
+            # two tabs, a retried request). SQLite raises IntegrityError for
+            # a genuine duplicate and can also raise OperationalError under
+            # write contention -- in both cases, re-check whether the pairing
+            # exists now rather than assuming which one it was.
+            db.session.rollback()
+            if not ManualMatch.query.filter_by(
+                ledger_record_id=ledger_record_id, statement_record_id=statement_record_id
+            ).first():
+                return jsonify({"error": "could not save the match, please retry"}), 409
 
     return jsonify({"ok": True})
 
 
 @bp.route("/unmatched-ack", methods=["POST"])
 def unmatched_ack():
-    data = request.get_json(force=True)
-    source_record_id = data["source_record_id"]
+    data = request.get_json(force=True, silent=True) or {}
+    source_record_id = data.get("source_record_id")
+
+    if not source_record_id:
+        return jsonify({"error": "source_record_id is required"}), 400
+    if not db.session.get(SourceRecord, source_record_id):
+        return jsonify({"error": "that record no longer exists -- try refreshing"}), 404
 
     exists = UnmatchedAck.query.filter_by(source_record_id=source_record_id).first()
     if not exists:
         db.session.add(UnmatchedAck(source_record_id=source_record_id, note=data.get("note")))
-        db.session.commit()
+        try:
+            db.session.commit()
+        except SQLAlchemyError:
+            db.session.rollback()
+            if not UnmatchedAck.query.filter_by(source_record_id=source_record_id).first():
+                return jsonify({"error": "could not save the acknowledgement, please retry"}), 409
 
     return jsonify({"ok": True})
 

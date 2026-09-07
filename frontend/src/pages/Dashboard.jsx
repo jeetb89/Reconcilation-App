@@ -1,5 +1,5 @@
 import { PlayCircleOutlined } from '@ant-design/icons'
-import { Alert, Card, Col, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getDashboard, startRun } from '../api.js'
@@ -21,6 +21,7 @@ export default function Dashboard() {
   useEffect(refresh, [])
 
   async function handleStartRun() {
+    if (starting) return // guard against a rapid double-click firing two runs
     setStarting(true)
     try {
       const run = await startRun()
@@ -71,15 +72,13 @@ export default function Dashboard() {
           </Card>
         </Col>
         <Col span={12}>
-          <Card
-            title="Start a run"
-            extra={
-              <a onClick={handleStartRun} style={{ opacity: starting ? 0.5 : 1 }}>
-                <PlayCircleOutlined /> {starting ? 'Running…' : 'Start Run'}
-              </a>
-            }
-          >
-            Reconciles everything currently loaded and snapshots the result.
+          <Card title="Start a run">
+            <Button type="primary" icon={<PlayCircleOutlined />} loading={starting} onClick={handleStartRun}>
+              {starting ? 'Running…' : 'Start Run'}
+            </Button>
+            <p style={{ marginTop: 12, marginBottom: 0 }}>
+              Reconciles everything currently loaded and snapshots the result.
+            </p>
           </Card>
         </Col>
       </Row>

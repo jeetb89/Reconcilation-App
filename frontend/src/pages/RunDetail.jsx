@@ -27,6 +27,9 @@ export default function RunDetail() {
   const { runId } = useParams()
   const [data, setData] = useState(null)
   const [matchChoice, setMatchChoice] = useState({})
+  // Tracks rows with a resolve action in flight, so a rapid double-click on
+  // the same row can't fire the request twice before refresh() removes it.
+  const [busyIds, setBusyIds] = useState(() => new Set())
 
   function refresh() {
     getRunDetail(runId).then(setData).catch((err) => message.error(err.message))
@@ -35,17 +38,41 @@ export default function RunDetail() {
   useEffect(refresh, [runId])
 
   async function handleMatch(ledgerRecordId) {
+    if (busyIds.has(ledgerRecordId)) return
     const statementRecordId = matchChoice[ledgerRecordId]
     if (!statementRecordId) return message.warning('Pick a statement row to match with first.')
-    await manualMatch(ledgerRecordId, statementRecordId)
-    message.success('Matched. This pairing will hold on future runs.')
-    refresh()
+
+    setBusyIds((prev) => new Set(prev).add(ledgerRecordId))
+    try {
+      await manualMatch(ledgerRecordId, statementRecordId)
+      message.success('Matched. This pairing will hold on future runs.')
+      refresh()
+    } catch (err) {
+      message.error(err.message)
+      setBusyIds((prev) => {
+        const next = new Set(prev)
+        next.delete(ledgerRecordId)
+        return next
+      })
+    }
   }
 
   async function handleAck(sourceRecordId) {
-    await unmatchedAck(sourceRecordId)
-    message.success('Acknowledged as having no pair. Will not resurface on future runs.')
-    refresh()
+    if (busyIds.has(sourceRecordId)) return
+
+    setBusyIds((prev) => new Set(prev).add(sourceRecordId))
+    try {
+      await unmatchedAck(sourceRecordId)
+      message.success('Acknowledged as having no pair. Will not resurface on future runs.')
+      refresh()
+    } catch (err) {
+      message.error(err.message)
+      setBusyIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sourceRecordId)
+        return next
+      })
+    }
   }
 
   if (!data) return null
@@ -73,28 +100,34 @@ export default function RunDetail() {
       { title: 'Executed at', dataIndex: 'executed_at', render: fmtTime },
       {
         title: 'Resolve',
-        render: (_, rec) => (
-          <Space>
-            {withMatchSelect && (
-              <>
-                <Select
-                  placeholder="match with…"
-                  style={{ width: 220 }}
-                  value={matchChoice[rec.id]}
-                  onChange={(v) => setMatchChoice((prev) => ({ ...prev, [rec.id]: v }))}
-                  options={unmatchedStatement.map((si) => ({
-                    value: si.statement_record.id,
-                    label: `${si.statement_record.external_ref} (${si.statement_record.instrument}, ${si.statement_record.amount})`,
-                  }))}
-                />
-                <Button size="small" type="primary" onClick={() => handleMatch(rec.id)}>Match</Button>
-              </>
-            )}
-            <Popconfirm title="Mark this row as having no pair?" onConfirm={() => handleAck(rec.id)}>
-              <Button size="small">No pair</Button>
-            </Popconfirm>
-          </Space>
-        ),
+        render: (_, rec) => {
+          const busy = busyIds.has(rec.id)
+          return (
+            <Space>
+              {withMatchSelect && (
+                <>
+                  <Select
+                    placeholder="match with…"
+                    style={{ width: 220 }}
+                    value={matchChoice[rec.id]}
+                    disabled={busy}
+                    onChange={(v) => setMatchChoice((prev) => ({ ...prev, [rec.id]: v }))}
+                    options={unmatchedStatement.map((si) => ({
+                      value: si.statement_record.id,
+                      label: `${si.statement_record.external_ref} (${si.statement_record.instrument}, ${si.statement_record.amount})`,
+                    }))}
+                  />
+                  <Button size="small" type="primary" loading={busy} onClick={() => handleMatch(rec.id)}>
+                    Match
+                  </Button>
+                </>
+              )}
+              <Popconfirm title="Mark this row as having no pair?" onConfirm={() => handleAck(rec.id)}>
+                <Button size="small" loading={busy}>No pair</Button>
+              </Popconfirm>
+            </Space>
+          )
+        },
       },
     ]
     return cols
