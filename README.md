@@ -13,26 +13,32 @@ tabs for breaks/unmatched/OK, toast notifications for every action).
 
 ## Running it
 
-Backend:
+One command, both services:
 ```
+./run_dev.sh
+```
+Creates the venv and installs both dependency sets on first run, then starts
+Flask (http://127.0.0.1:5000) and the Vite dev server
+(http://localhost:5173) together. Open http://localhost:5173. Ctrl+C stops
+both.
+
+`./run_dev.sh prod` instead builds the frontend once and runs Flask alone,
+serving the built assets at http://127.0.0.1:5000 — one process, one port,
+no Vite server needed.
+
+Or run each side by hand, in two terminals:
+```
+# terminal 1
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python run.py          # http://127.0.0.1:5000
-```
 
-Frontend, in a second terminal:
-```
+# terminal 2
 cd frontend
 npm install
 npm run dev             # http://localhost:5173, proxies /api to :5000
 ```
-
-Open http://localhost:5173 during development. Or, for a single process on
-one port: `npm run build` (from `frontend/`) writes static assets into
-`app/static_frontend/`, which Flask serves directly — after that, `python
-run.py` alone serves the whole app at http://127.0.0.1:5000, no Vite server
-needed.
 
 Upload the sample files from `sample_data/` in this order to see every case
 in one pass:
