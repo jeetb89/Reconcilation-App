@@ -1,49 +1,66 @@
-import { useRef, useState } from 'react'
+import { InboxOutlined } from '@ant-design/icons'
+import { Alert, Select, Space, Upload, message } from 'antd'
+import { useState } from 'react'
 import { uploadFile } from '../api.js'
+
+const { Dragger } = Upload
 
 export default function UploadForm({ onDone }) {
   const [sourceSystem, setSourceSystem] = useState('LEDGER')
   const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState(null)
-  const fileInput = useRef(null)
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const file = fileInput.current.files[0]
-    if (!file) return
-
+  async function handleUpload({ file, onSuccess, onError }) {
     setBusy(true)
-    setMessage(null)
     try {
       const result = await uploadFile(sourceSystem, file)
       if (result.skipped_duplicate_file) {
-        setMessage({ type: 'info', text: `${file.name}: identical file already ingested, skipped.` })
+        message.info(`${file.name}: identical file already ingested, skipped.`)
       } else {
-        let text = `${file.name}: ${result.rows_inserted} new, ${result.rows_updated} corrected, ${result.rows_unchanged} unchanged.`
-        if (result.row_errors.length) text += ` ${result.row_errors.length} row(s) rejected.`
-        setMessage({ type: 'info', text })
+        message.success(
+          `${file.name}: ${result.rows_inserted} new, ${result.rows_updated} corrected, ${result.rows_unchanged} unchanged.`,
+        )
+        if (result.row_errors.length) {
+          message.warning(`${result.row_errors.length} row(s) rejected — see details below.`)
+        }
       }
-      fileInput.current.value = ''
-      onDone()
+      onSuccess(result)
+      onDone(result.row_errors || [])
     } catch (err) {
-      setMessage({ type: 'error', text: err.message })
+      message.error(err.message)
+      onError(err)
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <label>
-        Source:{' '}
-        <select value={sourceSystem} onChange={(e) => setSourceSystem(e.target.value)}>
-          <option value="LEDGER">Our ledger</option>
-          <option value="STATEMENT">Other company's statement</option>
-        </select>
-      </label>{' '}
-      <input type="file" accept=".csv" ref={fileInput} required />{' '}
-      <button type="submit" disabled={busy}>{busy ? 'Uploading…' : 'Upload'}</button>
-      {message && <div className={`flash ${message.type}`}>{message.text}</div>}
-    </form>
+    <Space direction="vertical" style={{ width: '100%' }} size="middle">
+      <Space>
+        <span>Source:</span>
+        <Select
+          value={sourceSystem}
+          onChange={setSourceSystem}
+          style={{ width: 260 }}
+          options={[
+            { value: 'LEDGER', label: 'Our ledger' },
+            { value: 'STATEMENT', label: "Other company's statement" },
+          ]}
+        />
+      </Space>
+      <Dragger
+        accept=".csv"
+        multiple={false}
+        showUploadList={false}
+        disabled={busy}
+        customRequest={handleUpload}
+      >
+        <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+        <p className="ant-upload-text">Click or drag a CSV file to upload</p>
+        <p className="ant-upload-hint">
+          Re-uploading an identical file is a no-op. A file with the same rows but a few
+          corrected values updates those rows in place.
+        </p>
+      </Dragger>
+    </Space>
   )
 }
