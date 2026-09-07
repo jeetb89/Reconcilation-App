@@ -13,6 +13,7 @@ def create_app(db_path=None):
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = "dev"  # take-home scope: no real auth/session security needed
+    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # reject oversized uploads before they're read into memory
 
     db.init_app(app)
 

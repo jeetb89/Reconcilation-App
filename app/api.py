@@ -2,10 +2,15 @@ from flask import Blueprint, jsonify, request
 
 from app.models import ManualMatch, ReconciliationRun, RunResultItem, SourceRecord, UnmatchedAck, db
 from app.serializers import serialize_record, serialize_result_item, serialize_run
-from app.services.ingest import ingest_file
+from app.services.ingest import FileFormatError, ingest_file
 from app.services.run_service import run_reconciliation
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+@bp.errorhandler(413)
+def file_too_large(_exc):
+    return jsonify({"error": "File is too large (max 10 MB)."}), 413
 
 
 @bp.route("/dashboard")
@@ -28,7 +33,10 @@ def upload():
     if not file or not file.filename:
         return jsonify({"error": "no file provided"}), 400
 
-    result = ingest_file(source_system, file.filename, file.read())
+    try:
+        result = ingest_file(source_system, file.filename, file.read())
+    except FileFormatError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify({
         "skipped_duplicate_file": result.skipped_duplicate_file,

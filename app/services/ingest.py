@@ -17,6 +17,13 @@ from app.core.normalize import normalize_row, NormalizationError
 from app.models import SourceFile, SourceRecord, SourceRecordHistory, db
 
 
+class FileFormatError(ValueError):
+    """Raised for problems with the file as a whole (not a single row) --
+    not text, or no header row at all. Distinct from NormalizationError,
+    which is always per-row and gets reported as a rejected row instead of
+    failing the whole upload."""
+
+
 @dataclass
 class IngestResult:
     skipped_duplicate_file: bool
@@ -41,16 +48,28 @@ def _changed(existing: SourceRecord, canonical) -> bool:
 
 
 def ingest_file(source_system: str, filename: str, file_bytes: bytes) -> IngestResult:
+    if not file_bytes:
+        raise FileFormatError("The file is empty.")
+
     content_hash = hashlib.sha256(file_bytes).hexdigest()
 
     if SourceFile.query.filter_by(source_system=source_system, content_hash=content_hash).first():
         return IngestResult(True, 0, 0, 0, [])
 
+    try:
+        text = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise FileFormatError("Could not read this file as text -- is it actually a CSV?")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise FileFormatError("No header row found -- is this a CSV file?")
+
+    # Validate the format up front, before writing anything, so a bad file
+    # never leaves a half-created source_file/source_record behind.
     source_file = SourceFile(source_system=source_system, filename=filename, content_hash=content_hash)
     db.session.add(source_file)
     db.session.flush()  # get source_file.id
-
-    reader = csv.DictReader(io.StringIO(file_bytes.decode("utf-8-sig")))
 
     inserted = updated = unchanged = 0
     errors = []
