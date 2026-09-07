@@ -74,6 +74,16 @@ def ingest_file(source_system: str, filename: str, file_bytes: bytes) -> IngestR
     inserted = updated = unchanged = 0
     errors = []
 
+    # One bulk load instead of a query per row -- a file with N rows used to
+    # cost N round trips just to check "does this ref already exist?". Kept
+    # up to date in memory as we go, so a reference repeated within the same
+    # file (last occurrence wins) still resolves correctly against the
+    # earlier occurrence without re-querying.
+    existing_by_ref = {
+        r.external_ref: r
+        for r in SourceRecord.query.filter_by(source_system=source_system).all()
+    }
+
     for row_number, row in enumerate(reader, start=2):  # header is line 1
         try:
             canonical = normalize_row(source_system, row)
@@ -81,12 +91,10 @@ def ingest_file(source_system: str, filename: str, file_bytes: bytes) -> IngestR
             errors.append((row_number, str(exc)))
             continue
 
-        existing = SourceRecord.query.filter_by(
-            source_system=source_system, external_ref=canonical.external_ref
-        ).first()
+        existing = existing_by_ref.get(canonical.external_ref)
 
         if existing is None:
-            db.session.add(SourceRecord(
+            new_record = SourceRecord(
                 source_system=source_system,
                 external_ref=canonical.external_ref,
                 executed_at=canonical.executed_at,
@@ -98,13 +106,21 @@ def ingest_file(source_system: str, filename: str, file_bytes: bytes) -> IngestR
                 status=canonical.status,
                 raw_json=json.dumps(canonical.raw),
                 source_file_id=source_file.id,
-            ))
+            )
+            db.session.add(new_record)
+            existing_by_ref[canonical.external_ref] = new_record
             inserted += 1
             continue
 
         if not _changed(existing, canonical):
             unchanged += 1
             continue
+
+        if existing.id is None:
+            # a duplicate reference earlier in this same file was just
+            # inserted and hasn't been flushed yet -- give it a real id
+            # before the history row below references it.
+            db.session.flush()
 
         db.session.add(SourceRecordHistory(
             source_record_id=existing.id,

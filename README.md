@@ -167,6 +167,26 @@ of a multi-day scenario, independently runs a from-scratch full rescan and
 asserts the incremental result matches it exactly — "faster" is worthless
 if it's not identical, so that's the property actually under test.
 
+### Ingestion doesn't do a query per row
+
+`ingest_file` used to check "does this reference already exist?" with one
+`SELECT` per CSV row — a 2,000-row file meant 2,000 round trips before a
+single row was written. It now loads every existing record for that source
+into an in-memory dict once per upload and does the existence check there
+instead, updating the dict as it goes so a reference repeated within the
+same file still resolves against the earlier occurrence. Measured on a
+synthetic 2,000-row file: 4,002 SQL statements before this change, 2,003
+after — exactly the 2,000 per-row `SELECT`s removed. (The remaining ~2,000
+statements are one `INSERT` per new row, standard SQLAlchemy ORM behavior;
+batching those further, e.g. via `bulk_save_objects`, is a separate
+optimization I didn't need for this scope.)
+
+`source_record.updated_at` and the three foreign keys on `run_result_item`
+(`run_id`, `ledger_record_id`, `statement_record_id`) are now indexed —
+SQLite doesn't index foreign key columns automatically, and both the
+incremental run's dirty-check and the run-detail page filter on exactly
+these columns.
+
 ## What I left out
 
 - **Auth / multi-user attribution.** `matched_by` / `acknowledged_by` fields
@@ -189,6 +209,10 @@ if it's not identical, so that's the property actually under test.
   that matters, per the brief). The React components are thin rendering of
   API responses with no independent logic, so I didn't add a JS test
   runner for this scope.
+- **Schema migrations.** `db.create_all()` only creates tables that don't
+  exist yet — it won't add a new column or index to an already-existing
+  SQLite file. A schema change (like the indexes above) needs a fresh
+  database in dev. A real deployment would want Alembic.
 
 ## What I'd do next
 

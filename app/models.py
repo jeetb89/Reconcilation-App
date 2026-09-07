@@ -41,7 +41,8 @@ class SourceRecord(db.Model):
     status = db.Column(db.String(16), nullable=False)
     raw_json = db.Column(db.Text, nullable=False)
     source_file_id = db.Column(db.Integer, db.ForeignKey("source_file.id"), nullable=False)
-    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    # Indexed: the incremental run's dirty-check filters on this range every run.
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False, index=True)
 
     source_file = db.relationship("SourceFile")
 
@@ -88,11 +89,16 @@ class RunResultItem(db.Model):
     __tablename__ = "run_result_item"
 
     id = db.Column(db.Integer, primary_key=True)
-    run_id = db.Column(db.Integer, db.ForeignKey("reconciliation_run.id"), nullable=False)
+    # All three FKs are indexed: run_id is how the run-detail page and the
+    # incremental run's carry-forward pass both look these rows up; the
+    # record ids are how ingestion/manual-match flows find a record's history
+    # of appearances across runs. SQLite (like most DBs) does not index FK
+    # columns automatically.
+    run_id = db.Column(db.Integer, db.ForeignKey("reconciliation_run.id"), nullable=False, index=True)
     bucket = db.Column(db.String(16), nullable=False)  # "OK" / "BREAK" / "UNMATCHED_LEDGER" / "UNMATCHED_STATEMENT"
     match_type = db.Column(db.String(8), nullable=True)  # "AUTO" / "MANUAL", only for matched pairs
-    ledger_record_id = db.Column(db.Integer, db.ForeignKey("source_record.id"), nullable=True)
-    statement_record_id = db.Column(db.Integer, db.ForeignKey("source_record.id"), nullable=True)
+    ledger_record_id = db.Column(db.Integer, db.ForeignKey("source_record.id"), nullable=True, index=True)
+    statement_record_id = db.Column(db.Integer, db.ForeignKey("source_record.id"), nullable=True, index=True)
     diffs_json = db.Column(db.Text, nullable=True)  # serialized FieldDiff list, only for BREAK
 
     run = db.relationship("ReconciliationRun")
